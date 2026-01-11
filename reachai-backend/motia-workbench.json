@@ -85,8 +85,8 @@
         "y": 21
       },
       "src/paidUser/checkPayment.step.ts": {
-        "x": -725,
-        "y": -20
+        "x": -675,
+        "y": 12
       },
       "src/paidUser/TrendingVidPaidUser.step.ts": {
         "x": 510,

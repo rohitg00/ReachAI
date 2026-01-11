@@ -309,27 +309,6 @@ export function GenerateEmailTEXT(
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 /* ---------------- HTML Email (Version B — Premium UI) ---------------- */
 
 export function GenerateEmailHTML(
@@ -345,6 +324,7 @@ export function GenerateEmailHTML(
   const premiumThumb = premiumId
     ? `https://i.ytimg.com/vi/${premiumId}/maxresdefault.jpg`
     : escapeAttr(titles[0].thumbnail || "");
+
 
 
   const urlCTA = `${process.env.FRONTEND_URL}/pay/${channelId}?email=${email}`;
@@ -641,7 +621,7 @@ return `
     <table width="100%">
       <tr>
         <td align="center">
-          <img src="${premiumThumb}"
+          <img  src="${premiumThumb}"
                width="100%" style="max-width:634px;border-radius:8px;">
         </td>
       </tr>
