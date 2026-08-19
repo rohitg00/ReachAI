@@ -1,0 +1,7 @@
+# iii engine configuration for the ReachAI backend deployment.
+# Minimal production set: engine core + HTTP routing + state store + our worker.
+workers:
+  - name: http
+  - name: state
+  - name: reachai-backend
+    worker_path: /app/reachai-backend

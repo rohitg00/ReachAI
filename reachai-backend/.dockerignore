@@ -1,0 +1,11 @@
+# Secrets stay on the host; the container reads them through compose `env_file`.
+.env
+
+# Reinstalled inside the image by the engine's worker install step.
+node_modules
+
+# Engine-managed runtime state, and the tutorial fixtures the worker never reads.
+iii.lock
+tutorial
+
+.git

@@ -1,0 +1,5 @@
+name: reachai-backend
+description: ReachAI backend (migrated from Motia) - YouTube title/metadata optimization flows with email delivery and Razorpay payments.
+scripts:
+  install: "npm install"
+  start: "node src/index.js"

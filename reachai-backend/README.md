@@ -1,92 +1,79 @@
-# reachai-backend
+# ReachAI Backend (iii)
 
-A Motia tutorial project in TypeScript.
+ReachAI backend, migrated from **Motia** to the **iii** worker SDK. It is a single-file worker: [`src/index.js`](src/index.js).
 
-## What is Motia?
+## Concept mapping (Motia → iii)
 
-Motia is an open-source, unified backend framework that eliminates runtime fragmentation by bringing **APIs, background jobs, queueing, streaming, state, workflows, AI agents, observability, scaling, and deployment** into one unified system using a single core primitive, the **Step**.
+| Motia | iii equivalent |
+|---|---|
+| `type: 'api'` step (`path`, `method`) | function bound to the engine's `http` trigger type (`{ api_path, http_method }`) |
+| `type: 'event'` step (`subscribes`) | plain registered function, wired by topic in the `TOPICS` map |
+| `emit({ topic, data })` | `worker.trigger({ function_id, payload, action: TriggerAction.Void() })` (fire-and-forget) |
+| `state.get/set(scope, key)` | engine `state::get` / `state::set` (scopes `reachai-jobs`, `reachai-paidjobs`, `reachai-spam`) |
+| `logger.*` | `console.*` (captured by engine observability) |
+| `infrastructure.queue.maxRetries: 3` (BullMQ) | `paidStep()` wrapper — 3 attempts, counter in job state |
+| `razorpay` npm package | direct REST calls to `api.razorpay.com/v1/orders` |
+| `motia dev` / workbench | iii console + `worker::add` (local install) |
 
-## Quick Start
+## HTTP API
+
+| Route | Method | Description |
+|---|---|---|
+| `/submit` | POST | Start the free-user flow (channel + email) |
+| `/status?jobId=` | GET | Poll free-job progress |
+| `/api/contact` | POST | Contact form → admin email |
+| `/api/payment/create-order` | POST | Create a ₹99 Razorpay order |
+| `/api/payment/verify` | POST | Verify Razorpay checkout signature |
+| `/api/payment/webhook` | POST | Razorpay webhook (HMAC-verified) |
+| `/api/payment/paid-jobs/status?PaidJobId=` | GET | Poll paid-job progress (iii addition) |
+| `/api/jobs/:jobId/retry` | POST | Retry a failed paid job from the first incomplete step (implemented in iii; stub in Motia) |
+
+## Flows
+
+**Free** (`reachai-jobs` state scope): submit → resolve-channel → fetch-videos → fetch-niche → fetch-trending → generate-titles → send-titles-email → done. Errors on any step emit `yt.*.error` → error-handler emails the user.
+
+**Paid** (`reachai-paidjobs`): create-order → verify/webhook → fetch-videos-paid → fetch-niche-paid → fetch-trending-paid → generate-metadata-paid → send-metadata-email-paid → done. Each step retries 3× then emits `paidUser.*.error` → error-handler-paid.
+
+All steps are idempotent via duplicate-suppression flags (`videosFetched`, `nicheFetched`, `trendVidFetched`, `AiMetadatafetched`, `emailSent`) — a webhook + verify double-fire resumes instead of duplicating work.
+
+## Environment variables
+
+See [`env.example`](env.example). Same names as the Motia version: `OPENAI_API_KEY` (OpenRouter), `YOUTUBE_API_KEY`, `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `RESEND_FROM_SUPPORTEMAIL`, `MERA_EMAIL`, `FRONTEND_URL`, `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`.
+
+## Run
+
+Install as a local iii worker (engine must be running):
 
 ```bash
-# Start the development server
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
+npm install
+III_URL=ws://localhost:49134 node src/index.js   # manual
+# or install engine-managed (auto-restarts on edits):
+iii worker add .
 ```
 
-This starts the Motia runtime and the **Workbench** - a powerful UI for developing and debugging your workflows. By default, it's available at [`http://localhost:3000`](http://localhost:3000).
+HTTP routes are served by the engine's `http` worker (default port **3111**). Route bindings propagate live through the engine — no http restart needed.
 
-1. **Open the Workbench** in your browser at [`http://localhost:3000`](http://localhost:3000)
-2. **Click the `Tutorial`** button on the top right of the workbench
-3. **Complete the `Tutorial`** to get an understanding of the basics of Motia and using the Workbench
+## Deploy (replaces Motia Cloud)
 
-## Step Types
-
-Every Step has a `type` that defines how it triggers:
-
-| Type | When it runs | Use case |
-|------|--------------|----------|
-| **`api`** | HTTP request | REST APIs, webhooks |
-| **`event`** | Event emitted | Background jobs, workflows |
-| **`cron`** | Schedule | Cleanup, reports, reminders |
-
-## Development Commands
+The backend ships as a self-contained Docker deployment built on the official `iiidev/iii:latest` image (distroless, non-root). Files: `Dockerfile`, `docker-compose.yml`, `config.yaml`, `.env`.
 
 ```bash
-# Start Workbench and development server
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
+# 1. fill in real secrets (never commit .env)
+$EDITOR .env
 
-# Start production server (without hot reload)
-npm run start
-# or
-yarn start
-# or
-pnpm start
+# 2. build & run
+docker compose up -d --build
 
-# Generate TypeScript types from Step configs
-npm run generate-types
-# or
-yarn generate-types
-# or
-pnpm generate-types
-
-# Build project for deployment
-npm run build
-# or
-yarn build
-# or
-pnpm build
+# 3. verify
+curl 'http://localhost:3111/status?jobId=none'   # -> 404 = engine + routes live
 ```
 
-## Project Structure
+Inside the container: the iii engine + the `http` worker (REST on **3111**) + the `state` worker (job storage) + the `reachai-backend` worker (this code, whose single dependency the engine installs on first boot). The engine WebSocket (49134), stream API (3112), and Prometheus metrics (9464) are also exposed.
 
-```
-steps/              # Your Step definitions (or use src/)
-src/                # Shared services and utilities
-motia.config.ts     # Motia configuration
-```
+**TLS / domain:** the engine does not terminate TLS. Put a reverse proxy (Caddy/Nginx) in front and route `/api/*` → 3111, `/ws` → 49134, `/stream/*` → 3112 — example configs in the [iii deployment docs](https://iii.dev/docs/using-iii/deployment). Point `NEXT_PUBLIC_BACKEND_URL` at your domain and set the Razorpay webhook URL to `https://<your-domain>/api/payment/webhook`.
 
-Steps are auto-discovered from your `steps/` or `src/` directories - no manual registration required.
+**Regenerating the assets** (won't overwrite your edits): `iii project generate-docker`.
 
-## Tutorial
+**Data:** job state persists in the `iii_data` and `iii_config` named volumes — `docker compose down` keeps them, `down -v` wipes them.
 
-This project includes an interactive tutorial that will guide you through:
-- Understanding Steps and their types
-- Creating API endpoints
-- Building event-driven workflows
-- Using state management
-- Observing your flows in the Workbench
-
-## Learn More
-
-- [Documentation](https://motia.dev/docs) - Complete guides and API reference
-- [Quick Start Guide](https://motia.dev/docs/getting-started/quick-start) - Detailed getting started tutorial
-- [Core Concepts](https://motia.dev/docs/concepts/overview) - Learn about Steps and Motia architecture
-- [Discord Community](https://discord.gg/motia) - Get help and connect with other developers
+> Retries are in-process. For crash-safe retries in production, route the steps through the queue worker with `TriggerAction.Enqueue`.

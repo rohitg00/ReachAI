@@ -1,9 +1,3 @@
-node_modules
-python_modules
-.venv
-venv
-.motia
-.mermaid
-dist
-*.pyc
+node_modules/
 .env
+iii.lock
