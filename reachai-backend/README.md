@@ -7,8 +7,8 @@ ReachAI backend, migrated from **Motia** to the **iii** worker SDK. It is a sing
 | Motia | iii equivalent |
 |---|---|
 | `type: 'api'` step (`path`, `method`) | function bound to the engine's `http` trigger type (`{ api_path, http_method }`) |
-| `type: 'event'` step (`subscribes`) | plain registered function, wired by topic in the `TOPICS` map |
-| `emit({ topic, data })` | `worker.trigger({ function_id, payload, action: TriggerAction.Void() })` (fire-and-forget) |
+| `type: 'event'` step (`subscribes`) | function bound to the `pubsub` worker's `subscribe` trigger on the same topic |
+| `emit({ topic, data })` | the `pubsub` worker's `publish` function (fire-and-forget fan-out) |
 | `state.get/set(scope, key)` | engine `state::get` / `state::set` (scopes `reachai-jobs`, `reachai-paidjobs`, `reachai-spam`) |
 | `logger.*` | `console.*` (captured by engine observability) |
 | `infrastructure.queue.maxRetries: 3` (BullMQ) | `paidStep()` wrapper — 3 attempts, counter in job state |
@@ -68,7 +68,7 @@ docker compose up -d --build
 curl 'http://localhost:3111/status?jobId=none'   # -> 404 = engine + routes live
 ```
 
-Inside the container: the iii engine + the `http` worker (REST on **3111**) + the `state` worker (job storage) + the `reachai-backend` worker (this code, whose single dependency the engine installs on first boot). The engine WebSocket (49134), stream API (3112), and Prometheus metrics (9464) are also exposed.
+Inside the container: the iii engine + the `http` worker (REST on **3111**) + the `state` worker (job storage) + the `pubsub` worker (topic fan-out between steps) + the `reachai-backend` worker (this code, whose single dependency the engine installs on first boot). The engine WebSocket (49134), stream API (3112), and Prometheus metrics (9464) are also exposed.
 
 **TLS / domain:** the engine does not terminate TLS. Put a reverse proxy (Caddy/Nginx) in front and route `/api/*` → 3111, `/ws` → 49134, `/stream/*` → 3112 — example configs in the [iii deployment docs](https://iii.dev/docs/using-iii/deployment). Point `NEXT_PUBLIC_BACKEND_URL` at your domain and set the Razorpay webhook URL to `https://<your-domain>/api/payment/webhook`.
 
@@ -111,5 +111,25 @@ which is exactly why the pin is on the alpha.
 **When the stable release ships**, three lines move: `iii-sdk` in
 `package.json`, the image tag in `Dockerfile`, and the two package versions in
 `worker-compose.yaml`. No code changes.
+
+## What the platform provides
+
+Nothing here reimplements what a registry worker already does:
+
+| Concern | Worker |
+|---|---|
+| HTTP routes | `http` — routes are trigger config, not a server in this code |
+| Job state | `state` — `state::get` / `state::set`, three scopes |
+| Topic fan-out between steps | `pubsub` — `subscribe` triggers and the `publish` function |
+
+Still worth moving when someone has the appetite:
+
+- **LLM calls.** `aiJson()` posts to OpenRouter directly. `llm-router` plus
+  `provider-openrouter` would take the key, the model catalogue, fallback and
+  the JSON response format off this file. It needs the OpenRouter key moved
+  into the provider worker's configuration, so it is a deployment change too.
+- **Retries.** `paidStep()` counts attempts in job state. The `queue` worker's
+  `durable:subscriber` gives crash-safe retries and a dead-letter queue, which
+  in-process counting cannot.
 
 > Retries are in-process. For crash-safe retries in production, route the steps through the queue worker with `TriggerAction.Enqueue`.

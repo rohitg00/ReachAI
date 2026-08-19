@@ -1,18 +1,6 @@
-/**
- * ReachAI backend - single-file iii worker (migrated from Motia).
- *
- *   Motia `type: 'api'` steps   -> functions bound to the `http` trigger type
- *   Motia `type: 'event'` steps -> plain functions, wired by TOPICS below
- *   Motia state.get/set         -> engine state::get / state::set
- *   Motia emit({topic, data})   -> worker.trigger(..., TriggerAction.Void())
- *   Motia BullMQ retries (3)    -> paidStep() wrapper below
- */
 import { registerWorker, TriggerAction } from 'iii-sdk'
 import crypto from 'node:crypto'
 
-// The engine address comes from whatever supervisor started this worker
-// (`iii worker`, Docker, or a future compose daemon sets III_URL), and falls
-// back to a local engine so `node src/index.js` works by hand too.
 const worker = registerWorker(process.env.III_URL ?? 'ws://127.0.0.1:49134', {
   workerName: 'reachai-backend',
   workerDescription:
@@ -20,47 +8,48 @@ const worker = registerWorker(process.env.III_URL ?? 'ws://127.0.0.1:49134', {
   invocationTimeoutMs: 180000,
 })
 
-/* ---------------- state (was Motia `state` context) ---------------- */
 const SCOPES = { jobs: 'reachai-jobs', paidJobs: 'reachai-paidjobs', spam: 'reachai-spam' }
 const sGet = async (scope, key) =>
   (await worker.trigger({ function_id: 'state::get', payload: { scope, key }, timeoutMs: 10000 }).catch(() => null)) ?? null
 const sSet = (scope, key, value) =>
   worker.trigger({ function_id: 'state::set', payload: { scope, key, value }, timeoutMs: 10000 })
 
-/* ---------------- emit (was Motia pub/sub) ---------------- */
-const TOPICS = {
-  'yt.submit': 'reachai-backend::resolve-channel',
-  'yt.channel.resolved': 'reachai-backend::fetch-videos',
-  'yt.videos.fetched': 'reachai-backend::fetch-niche',
-  'yt.niche.fetched': 'reachai-backend::fetch-trending',
-  'yt.trendingVideos.fetched': 'reachai-backend::generate-titles',
-  'yt.AI-Title.fetched': 'reachai-backend::send-titles-email',
-  'yt.titles.Email-Send': 'reachai-backend::flow-complete',
-  'yt.channel.error': 'reachai-backend::error-handler',
-  'yt.videos.error': 'reachai-backend::error-handler',
-  'yt.niche.error': 'reachai-backend::error-handler',
-  'yt.trendingVideos.error': 'reachai-backend::error-handler',
-  'yt.AI-Title.error': 'reachai-backend::error-handler',
-  'yt.titles.Email-Send.error': 'reachai-backend::error-handler',
-  'paidUser.payment.success': 'reachai-backend::fetch-videos-paid',
-  'paidUser.videosfetched.success': 'reachai-backend::fetch-niche-paid',
-  'paidUser.Nichefetched.success': 'reachai-backend::fetch-trending-paid',
-  'paidUser.trendVid.success': 'reachai-backend::generate-metadata-paid',
-  'paidUser.AImetadata.success': 'reachai-backend::send-metadata-email-paid',
-  'PaidUser.Email-Send.success': 'reachai-backend::flow-complete',
-  'paidUser.videosfetched.error': 'reachai-backend::error-handler-paid',
-  'paidUser.Nichefetched.error': 'reachai-backend::error-handler-paid',
-  'paidUser.trendVid.error': 'reachai-backend::error-handler-paid',
-  'paidUser.AImetadata.error': 'reachai-backend::error-handler-paid',
-  'PaidUser.Email-Send.error': 'reachai-backend::error-handler-paid',
+const SUBSCRIPTIONS = {
+  'reachai-backend::resolve-channel': ['yt.submit'],
+  'reachai-backend::fetch-videos': ['yt.channel.resolved'],
+  'reachai-backend::fetch-niche': ['yt.videos.fetched'],
+  'reachai-backend::fetch-trending': ['yt.niche.fetched'],
+  'reachai-backend::generate-titles': ['yt.trendingVideos.fetched'],
+  'reachai-backend::send-titles-email': ['yt.AI-Title.fetched'],
+  'reachai-backend::error-handler': [
+    'yt.channel.error',
+    'yt.videos.error',
+    'yt.niche.error',
+    'yt.trendingVideos.error',
+    'yt.AI-Title.error',
+    'yt.titles.Email-Send.error',
+  ],
+  'reachai-backend::fetch-videos-paid': ['paidUser.payment.success'],
+  'reachai-backend::fetch-niche-paid': ['paidUser.videosfetched.success'],
+  'reachai-backend::fetch-trending-paid': ['paidUser.Nichefetched.success'],
+  'reachai-backend::generate-metadata-paid': ['paidUser.trendVid.success'],
+  'reachai-backend::send-metadata-email-paid': ['paidUser.AImetadata.success'],
+  'reachai-backend::flow-complete': ['yt.titles.Email-Send', 'PaidUser.Email-Send.success'],
+  'reachai-backend::error-handler-paid': [
+    'paidUser.videosfetched.error',
+    'paidUser.Nichefetched.error',
+    'paidUser.trendVid.error',
+    'paidUser.AImetadata.error',
+    'PaidUser.Email-Send.error',
+  ],
 }
-const emit = async (topic, data) => {
-  const function_id = TOPICS[topic]
-  if (!function_id) return console.warn(`[flow] no handler for topic "${topic}", dropping`)
-  await worker.trigger({ function_id, payload: data, action: TriggerAction.Void() })
-}
+const emit = (topic, data) =>
+  worker.trigger({
+    function_id: 'publish',
+    payload: { topic, data },
+    action: TriggerAction.Void(),
+  })
 
-/* ---------------- external APIs ---------------- */
 const youtubeSearch = async (params, apiKey) => {
   const qs = new URLSearchParams({ ...params, key: apiKey }).toString()
   const res = await fetch(`https://www.googleapis.com/youtube/v3/search?${qs}`)
@@ -136,8 +125,6 @@ const ytId = (u) => (String(u || '').match(/[?&]v=([\w-]{6,})/) || [])[1] || nul
 const thumbFor = (u, fallback, q = 'sddefault') =>
   ytId(u) ? `https://i.ytimg.com/vi/${ytId(u)}/${q}.jpg` : esc(fallback || '')
 
-/* ---------------- shared step scaffolding ---------------- */
-/** Which error topic each free step emits on failure (matches the Motia configs). */
 const FREE_ERROR_TOPICS = {
   'reachai-backend::resolve-channel': 'yt.channel.error',
   'reachai-backend::fetch-videos': 'yt.videos.error',
@@ -146,7 +133,6 @@ const FREE_ERROR_TOPICS = {
   'reachai-backend::generate-titles': 'yt.AI-Title.error',
   'reachai-backend::send-titles-email': 'yt.titles.Email-Send.error',
 }
-/** Free-flow step: on failure mark job failed + emit the step's error topic. */
 const freeStep = (id, description, run) =>
   worker.registerFunction(
     id,
@@ -166,7 +152,7 @@ const freeStep = (id, description, run) =>
     { description },
   )
 
-/** Paid-flow step: same shape but with 3-retry counter in state (was BullMQ maxRetries). */
+/** Three attempts, counting in job state, so a retry survives a restart. */
 const paidStep = (id, description, retryKey, errorTopic, run) =>
   worker.registerFunction(
     id,
@@ -194,9 +180,6 @@ const paidStep = (id, description, retryKey, errorTopic, run) =>
     { description },
   )
 
-/* ============================================================
- * HTTP routes (were Motia `type: 'api'` steps)
- * ============================================================ */
 const route = (fnId, api_path, http_method, handler) => {
   worker.registerFunction(fnId, handler, {
     description: `HTTP ${http_method} ${api_path}`,
@@ -208,7 +191,6 @@ const route = (fnId, api_path, http_method, handler) => {
   })
 }
 
-/* POST /submit - was submit.step.ts */
 route('reachai-backend::submit', '/submit', 'POST', async (req) => {
   try {
     const { channel, email } = req.body ?? {}
@@ -219,7 +201,6 @@ route('reachai-backend::submit', '/submit', 'POST', async (req) => {
       return { status_code: 400, body: { error: 'Invalid email format' } }
     }
 
-    // 3-minute spam window per email
     const SPAM_WINDOW = 3 * 60 * 1000
     const lastSubKey = `lastSub:${email}`
     const lastSub = await sGet(SCOPES.spam, lastSubKey)
@@ -261,7 +242,6 @@ route('reachai-backend::submit', '/submit', 'POST', async (req) => {
   }
 })
 
-/* GET /status - was get-status.step.ts */
 route('reachai-backend::get-status', '/status', 'GET', async (req) => {
   const jobId = req.query_params?.jobId
   if (!jobId) return { status_code: 400, body: { error: 'Missing jobId' } }
@@ -270,7 +250,6 @@ route('reachai-backend::get-status', '/status', 'GET', async (req) => {
   return { status_code: 200, body: { status: job.status } }
 })
 
-/* POST /api/contact - was contact.step.ts */
 route('reachai-backend::contact', '/api/contact', 'POST', async (req) => {
   try {
     const { name = '', email = '', message = '' } = req.body ?? {}
@@ -297,7 +276,6 @@ route('reachai-backend::contact', '/api/contact', 'POST', async (req) => {
   }
 })
 
-/* GET /api/payment/paid-jobs/status - iii addition for frontend polling */
 route('reachai-backend::get-paid-status', '/api/payment/paid-jobs/status', 'GET', async (req) => {
   const PaidJobId = req.query_params?.PaidJobId
   if (!PaidJobId) return { status_code: 400, body: { error: 'Missing PaidJobId' } }
@@ -306,7 +284,6 @@ route('reachai-backend::get-paid-status', '/api/payment/paid-jobs/status', 'GET'
   return { status_code: 200, body: { status: job.status } }
 })
 
-/* POST /api/payment/create-order - was CreateOrder.step.ts */
 route('reachai-backend::create-order', '/api/payment/create-order', 'POST', async (req) => {
   try {
     if (!req.body) return { status_code: 400, body: { error: 'Bad request' } }
@@ -358,7 +335,6 @@ route('reachai-backend::create-order', '/api/payment/create-order', 'POST', asyn
   }
 })
 
-/* POST /api/payment/verify - was checkPayment.step.ts */
 route('reachai-backend::verify-payment', '/api/payment/verify', 'POST', async (req) => {
   try {
     if (!req.body) return { status_code: 400, body: { error: 'Bad request' } }
@@ -395,7 +371,6 @@ route('reachai-backend::verify-payment', '/api/payment/verify', 'POST', async (r
   }
 })
 
-/* POST /api/payment/webhook - was webhook.step.ts */
 route('reachai-backend::webhook', '/api/payment/webhook', 'POST', async (req) => {
   try {
     const signature = req.headers?.['x-razorpay-signature']
@@ -403,7 +378,7 @@ route('reachai-backend::webhook', '/api/payment/webhook', 'POST', async (req) =>
 
     const expectedSignature = crypto
       .createHmac('sha256', process.env.RAZORPAY_WEBHOOK_SECRET)
-      .update(JSON.stringify(req.body)) // same trick as the Motia version
+      .update(JSON.stringify(req.body))
       .digest('hex')
     if (expectedSignature !== signature) {
       return { status_code: 400, body: { error: 'Invalid webhook signature' } }
@@ -439,7 +414,6 @@ route('reachai-backend::webhook', '/api/payment/webhook', 'POST', async (req) =>
   }
 })
 
-/* POST /api/jobs/:jobId/retry - was retry-manual.step.ts (empty stub in Motia; implemented here) */
 route('reachai-backend::manual-retry', '/api/jobs/:jobId/retry', 'POST', async (req) => {
   const PaidJobId = req.path_params?.jobId
   if (!PaidJobId) return { status_code: 400, body: { error: 'Missing jobId' } }
@@ -453,7 +427,6 @@ route('reachai-backend::manual-retry', '/api/jobs/:jobId/retry', 'POST', async (
     retriedAt: new Date().toISOString(),
   })
 
-  // resume from the first incomplete step
   if (!job.videosFetched) {
     await emit('paidUser.payment.success', { PaidJobId })
   } else if (!job.nicheFetched) {
@@ -484,9 +457,6 @@ route('reachai-backend::manual-retry', '/api/jobs/:jobId/retry', 'POST', async (
   return { status_code: 200, body: { success: true, message: 'Retry started' } }
 })
 
-/* ============================================================
- * Free-user flow steps (were Motia `type: 'event'` steps)
- * ============================================================ */
 
 const NICHE_PROMPT = (videos) => `
 You are an expert in YouTube channel analysis.
@@ -509,7 +479,6 @@ Video titles:
 ${videos.map((v) => `- ${v.title}`).join('\n')}
 `
 
-/* was resolve-channel.step.ts */
 freeStep('reachai-backend::resolve-channel', 'Resolve a YouTube handle to a channelId.', async (data, jobId, email) => {
   let channel = String(data.channel || '').trim()
   if (!channel.startsWith('@')) channel = '@' + channel
@@ -537,7 +506,6 @@ freeStep('reachai-backend::resolve-channel', 'Resolve a YouTube handle to a chan
   await emit('yt.channel.resolved', { jobId, channelId, channelName, email })
 })
 
-/* was fetch-videos.step.ts */
 freeStep('reachai-backend::fetch-videos', 'Fetch the latest 10 videos of the channel.', async (data, jobId, email) => {
   const apiKey = process.env.YOUTUBE_API_KEY
   if (!apiKey) throw new Error('Youtube api key not configured')
@@ -569,7 +537,6 @@ freeStep('reachai-backend::fetch-videos', 'Fetch the latest 10 videos of the cha
   await emit('yt.videos.fetched', { jobId, channelName: data.channelName, videos, email, channelId: data.channelId })
 })
 
-/* was fetch-niche.step.ts */
 freeStep('reachai-backend::fetch-niche', 'Detect channel niche from video titles with AI.', async (data, jobId, email) => {
   const job = await sGet(SCOPES.jobs, jobId)
   const UserVideos = job.videos
@@ -595,7 +562,6 @@ freeStep('reachai-backend::fetch-niche', 'Detect channel niche from video titles
   })
 })
 
-/* was trending-videos.step.ts */
 freeStep('reachai-backend::fetch-trending', 'Fetch top-viewed videos in the detected niche.', async (data, jobId, email) => {
   const apiKey = process.env.YOUTUBE_API_KEY
   if (!apiKey) throw new Error('youtube api key not configured')
@@ -639,7 +605,6 @@ freeStep('reachai-backend::fetch-trending', 'Fetch top-viewed videos in the dete
   })
 })
 
-/* was AI-generatedTitles.step.ts */
 freeStep('reachai-backend::generate-titles', 'Generate 2 optimized titles per video with AI.', async (data, jobId, email) => {
   const job = await sGet(SCOPES.jobs, jobId)
   const UserVideos = job.videos
@@ -757,7 +722,6 @@ IMPORTANT:
   await emit('yt.AI-Title.fetched', { jobId, email, channelName, channelId, ImprovedTitles })
 })
 
-/* was send-email.step.ts */
 freeStep('reachai-backend::send-titles-email', 'Send the optimized-titles email via Resend.', async (data, jobId, email) => {
   const { channelName, channelId } = data
   if (!channelId || !channelName) throw new Error('Missing channelId/channelName')
@@ -777,7 +741,6 @@ freeStep('reachai-backend::send-titles-email', 'Send the optimized-titles email 
     url: first5[i]?.url || t.url,
   }))
 
-  // prevent double send
   if (job?.emailId && job?.status === 'completed') {
     await emit('yt.titles.Email-Send', { jobId, email, emailId: job.emailId, alreadySent: true })
     return
@@ -812,7 +775,6 @@ freeStep('reachai-backend::send-titles-email', 'Send the optimized-titles email 
   await emit('yt.titles.Email-Send', { jobId, email, emailId: resJson?.id })
 })
 
-/* was error-handling.step.ts */
 worker.registerFunction(
   'reachai-backend::error-handler',
   async (data) => {
@@ -835,11 +797,7 @@ worker.registerFunction(
   { description: 'Free flow error handler: email the user when a step fails permanently.' },
 )
 
-/* ============================================================
- * Paid-user flow steps
- * ============================================================ */
 
-/* was fetchVideosPaid.step.ts */
 paidStep(
   'reachai-backend::fetch-videos-paid',
   'Fetch latest 10 videos after payment.',
@@ -901,7 +859,6 @@ paidStep(
   },
 )
 
-/* was fetchNichePaid.step.ts */
 paidStep(
   'reachai-backend::fetch-niche-paid',
   'Detect channel niche with AI (paid flow).',
@@ -947,7 +904,6 @@ paidStep(
   },
 )
 
-/* was TrendingVidPaidUser.step.ts */
 paidStep(
   'reachai-backend::fetch-trending-paid',
   'Fetch trending videos of the niche (paid flow).',
@@ -1014,7 +970,6 @@ paidStep(
   },
 )
 
-/* was AI-generatedMetadata.step.ts */
 paidStep(
   'reachai-backend::generate-metadata-paid',
   'Generate full metadata for all videos with AI (paid flow).',
@@ -1123,7 +1078,6 @@ IMPORTANT:
   },
 )
 
-/* was SendEmail-PaidUser.step.ts */
 paidStep(
   'reachai-backend::send-metadata-email-paid',
   'Send the full-metadata email via Resend (paid flow).',
@@ -1178,7 +1132,6 @@ paidStep(
   },
 )
 
-/* was paidUser-errorHandling.step.ts */
 worker.registerFunction(
   'reachai-backend::error-handler-paid',
   async (data) => {
@@ -1216,7 +1169,6 @@ ${PaidJobId}`.trim(),
   { description: 'Paid flow error handler: email the user and mark the job permanently failed.' },
 )
 
-/* terminal sink for completion topics */
 worker.registerFunction(
   'reachai-backend::flow-complete',
   async (data) => {
@@ -1226,9 +1178,6 @@ worker.registerFunction(
   { description: 'Terminal no-op for flow completion events.' },
 )
 
-/* ============================================================
- * Email HTML generators (were embedded in the Motia email steps)
- * ============================================================ */
 function titlesEmailHtml(channelName, titles, channelId, email) {
   const urlCTA = `${process.env.FRONTEND_URL}/pay/${channelId}?email=${email}`
   const premium = titles[0].premium_metadata
@@ -1411,6 +1360,12 @@ function metadataEmailHtml(channelName, items) {
 }
 
 console.log('[reachai-backend] single-file worker registered with all routes and flow steps')
+
+for (const [function_id, topics] of Object.entries(SUBSCRIPTIONS)) {
+  for (const topic of topics) {
+    worker.registerTrigger({ type: 'subscribe', function_id, config: { topic } })
+  }
+}
 
 process.on('SIGTERM', async () => {
   await worker.shutdown()
