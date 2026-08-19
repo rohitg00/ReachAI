@@ -55,7 +55,7 @@ HTTP routes are served by the engine's `http` worker (default port **3111**). Ro
 
 ## Deploy (replaces Motia Cloud)
 
-The backend ships as a self-contained Docker deployment built on the official `iiidev/iii:latest` image (distroless, non-root). Files: `Dockerfile`, `docker-compose.yml`, `config.yaml`, `.env`.
+The backend ships as a self-contained Docker deployment built on the official `iiidev/iii:0.22.1` image (distroless, non-root), pinned so a new engine release cannot change what a rebuild ships. Files: `Dockerfile`, `docker-compose.yml`, `config.yaml`, `.env`.
 
 ```bash
 # 1. fill in real secrets (never commit .env)
@@ -76,28 +76,40 @@ Inside the container: the iii engine + the `http` worker (REST on **3111**) + th
 
 **Data:** job state persists in the `iii_data` and `iii_config` named volumes — `docker compose down` keeps them, `down -v` wipes them.
 
-## Forward compatibility
+## Running on the alpha channel
 
-iii 0.23 adds **namespace** as a routing dimension and standardises how a
-supervisor talks to a worker: `III_URL` for the engine address,
-`III_NAMESPACE` for the namespace, `III_CONFIG` for configuration. This worker
-already follows that contract — it reads `III_URL` and passes no namespace, so
-it lands in the default one and behaves exactly as it does today.
+`iii-sdk` is pinned to `0.22.1-alpha.13`, the alpha that carries **namespace
+routing** and the supervisor contract (`III_URL`, `III_NAMESPACE`,
+`III_CONFIG`). Two reasons to be on it rather than the stable `0.22.1`:
 
-Verified against the 0.23.0-rc.2 SDK on a running engine: 22 functions and all
-8 routes register, and a seeded job round-trips through `GET /status`.
+- It is the only channel where `iii compose` exists, so `worker-compose.yaml`
+  in this directory actually runs.
+- It leaves nothing to change when the work lands in a stable release. The
+  worker code already reads the environment a supervisor injects.
 
-`worker-compose.yaml` in this directory describes the same three workers in
-the **worker-compose** format, which replaces the `workers:` list in
-`config.yaml` with one file per project. It ships in the iii alpha channel and
-was validated against engine `0.22.1-alpha.13`; it is not in a stable release,
-so nothing reads the file today. It is checked in so adopting `iii compose`
-later is a config change, not another migration.
+Against a stable engine the alpha SDK behaves exactly like the stable one: with
+no namespace configured it sends no namespace, so the Docker image below (which
+runs the stable engine, since the alpha channel publishes no image) is
+unaffected by the pin.
 
-Note for that day: compose places each project in its own namespace, and a
-worker only lands there if its SDK understands namespaces. On `iii-sdk` 0.22.x
-this worker registers in `default` regardless, and the daemon rejects it with
-`WORKER_IGNORED_NAMESPACE`. Bumping the dependency to `^0.23` is the whole
-change — the worker code already reads the environment compose injects.
+**Running the compose project** needs the alpha engine:
+
+```bash
+curl -fsSL https://install.iii.dev/iii/main/install.sh | \
+  III_RELEASE_TAG=iii-alpha/v0.22.1-alpha.13 sh
+
+iii compose --namespace reachai          # daemon, from this directory
+iii trigger compose::up --namespace reachai file=./worker-compose.yaml
+```
+
+Measured on that engine: `pre_start` runs `npm install`, then the worker is
+`ready` in about 750ms, registered in the `reachai` namespace. The same code on
+`iii-sdk` 0.22.1 (stable) is rejected with `WORKER_IGNORED_NAMESPACE`, because
+that SDK predates namespaces and lands in `default` whatever compose injects —
+which is exactly why the pin is on the alpha.
+
+**When the stable release ships**, three lines move: `iii-sdk` in
+`package.json`, the image tag in `Dockerfile`, and the two package versions in
+`worker-compose.yaml`. No code changes.
 
 > Retries are in-process. For crash-safe retries in production, route the steps through the queue worker with `TriggerAction.Enqueue`.

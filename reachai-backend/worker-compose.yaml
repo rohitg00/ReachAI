@@ -1,15 +1,14 @@
-# Forward-looking. worker-compose ships in the iii alpha channel (validated
-# against engine 0.22.1-alpha.13) and is not in a stable release yet, so
-# nothing reads this file today. It is here so adopting `iii compose` later is
-# a config change rather than a second migration.
+# The compose format, validated against engine 0.22.1-alpha.13 with
+# iii-sdk 0.22.1-alpha.13 (the pinned dependency). It ships in the iii alpha
+# channel; the stable release does not carry `iii compose` yet.
 #
-#   iii compose --namespace reachai            # daemon, from this directory
+#   curl -fsSL https://install.iii.dev/iii/main/install.sh | \
+#     III_RELEASE_TAG=iii-alpha/v0.22.1-alpha.13 sh   # engine with compose
+#   iii compose --namespace reachai                   # daemon, from this directory
 #   iii trigger compose::up --namespace reachai file=./worker-compose.yaml
 #
-# Requires iii-sdk >= 0.23 (namespace-aware). On 0.22.x the worker registers in
-# the `default` namespace whatever compose injects, and the daemon rejects it
-# with WORKER_IGNORED_NAMESPACE. Until then, config.yaml + docker-compose.yml
-# are the working path.
+# The container image runs the stable engine and config.yaml instead, because
+# the alpha channel publishes no image. Both describe the same three workers.
 namespace: reachai
 
 containers:
