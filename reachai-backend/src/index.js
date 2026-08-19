@@ -10,10 +10,10 @@
 import { registerWorker, TriggerAction } from 'iii-sdk'
 import crypto from 'node:crypto'
 
-const url = process.env.III_URL
-if (!url) throw new Error('III_URL must be set')
-
-const worker = registerWorker(url, {
+// The engine address comes from whatever supervisor started this worker
+// (`iii worker`, Docker, or a future compose daemon sets III_URL), and falls
+// back to a local engine so `node src/index.js` works by hand too.
+const worker = registerWorker(process.env.III_URL ?? 'ws://127.0.0.1:49134', {
   workerName: 'reachai-backend',
   workerDescription:
     'ReachAI backend: YouTube title/metadata optimization flows (free + paid) with Resend emails and Razorpay payments. Migrated from Motia.',

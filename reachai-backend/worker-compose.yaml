@@ -1,0 +1,28 @@
+# Forward-looking: worker-compose is specified but NOT released yet, so nothing
+# reads this file today. It is here so the move to `iii compose up` is a
+# deletion of config.yaml rather than a second migration.
+#
+# Spec: https://github.com/iii-hq/iii/tree/main/tech-specs/2026-07-14-worker-compose
+# Until it ships, config.yaml + docker-compose.yml are the working path.
+name: reachai
+
+containers:
+  # The REST surface every ReachAI route is published on (port 3111).
+  http:
+    worker: package://workers.iii.dev/http
+    version: ^0.21.3
+
+  # Job state for both flows: scopes reachai-jobs, reachai-paidjobs, reachai-spam.
+  state:
+    worker: package://workers.iii.dev/state
+    version: ^0.21.6
+
+  # This directory. The key matches `name:` in iii.worker.yaml, as the spec
+  # requires for a path:// worker that ships a manifest.
+  reachai-backend:
+    worker: path://.
+    depends_on: [http, state]
+    scripts:
+      # Compose does not run the manifest's install script, so the dependency
+      # install has to be declared here.
+      pre_start: "npm ci --omit=dev"

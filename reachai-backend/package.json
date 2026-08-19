@@ -3,6 +3,6 @@
   "type": "module",
   "private": true,
   "dependencies": {
-    "iii-sdk": "latest"
+    "iii-sdk": "^0.22.1"
   }
 }

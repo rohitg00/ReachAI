@@ -76,4 +76,21 @@ Inside the container: the iii engine + the `http` worker (REST on **3111**) + th
 
 **Data:** job state persists in the `iii_data` and `iii_config` named volumes — `docker compose down` keeps them, `down -v` wipes them.
 
+## Forward compatibility
+
+iii 0.23 adds **namespace** as a routing dimension and standardises how a
+supervisor talks to a worker: `III_URL` for the engine address,
+`III_NAMESPACE` for the namespace, `III_CONFIG` for configuration. This worker
+already follows that contract — it reads `III_URL` and passes no namespace, so
+it lands in the default one and behaves exactly as it does today.
+
+Verified against the 0.23.0-rc.2 SDK on a running engine: 22 functions and all
+8 routes register, and a seeded job round-trips through `GET /status`.
+
+`worker-compose.yaml` in this directory targets the **unreleased**
+worker-compose format, which replaces the `workers:` list in `config.yaml`
+with one file per project. Nothing reads it yet; it is checked in so adopting
+`iii compose up` later is a config change, not another migration. Delete it if
+you would rather wait for the release.
+
 > Retries are in-process. For crash-safe retries in production, route the steps through the queue worker with `TriggerAction.Enqueue`.
