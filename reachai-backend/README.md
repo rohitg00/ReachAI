@@ -87,10 +87,17 @@ it lands in the default one and behaves exactly as it does today.
 Verified against the 0.23.0-rc.2 SDK on a running engine: 22 functions and all
 8 routes register, and a seeded job round-trips through `GET /status`.
 
-`worker-compose.yaml` in this directory targets the **unreleased**
-worker-compose format, which replaces the `workers:` list in `config.yaml`
-with one file per project. Nothing reads it yet; it is checked in so adopting
-`iii compose up` later is a config change, not another migration. Delete it if
-you would rather wait for the release.
+`worker-compose.yaml` in this directory describes the same three workers in
+the **worker-compose** format, which replaces the `workers:` list in
+`config.yaml` with one file per project. It ships in the iii alpha channel and
+was validated against engine `0.22.1-alpha.13`; it is not in a stable release,
+so nothing reads the file today. It is checked in so adopting `iii compose`
+later is a config change, not another migration.
+
+Note for that day: compose places each project in its own namespace, and a
+worker only lands there if its SDK understands namespaces. On `iii-sdk` 0.22.x
+this worker registers in `default` regardless, and the daemon rejects it with
+`WORKER_IGNORED_NAMESPACE`. Bumping the dependency to `^0.23` is the whole
+change — the worker code already reads the environment compose injects.
 
 > Retries are in-process. For crash-safe retries in production, route the steps through the queue worker with `TriggerAction.Enqueue`.
