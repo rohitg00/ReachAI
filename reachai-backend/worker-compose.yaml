@@ -27,11 +27,16 @@ containers:
     worker: package://pubsub
     version: 0.21.2
 
+  # Durable queues: the paid flow's retries and DLQ.
+  queue:
+    worker: package://queue
+    version: 0.21.3
+
   # This directory. The key matches `name:` in iii.worker.yaml, which the
   # format requires for a path:// worker that ships a manifest.
   reachai-backend:
     worker: path://.
-    depends_on: [state, http, pubsub]
+    depends_on: [state, http, pubsub, queue]
     scripts:
       # Compose does not run the manifest's install script, so the dependency
       # install is declared here.

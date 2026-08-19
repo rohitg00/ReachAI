@@ -29,11 +29,6 @@ const SUBSCRIPTIONS = {
     'yt.AI-Title.error',
     'yt.titles.Email-Send.error',
   ],
-  'reachai-backend::fetch-videos-paid': ['paidUser.payment.success'],
-  'reachai-backend::fetch-niche-paid': ['paidUser.videosfetched.success'],
-  'reachai-backend::fetch-trending-paid': ['paidUser.Nichefetched.success'],
-  'reachai-backend::generate-metadata-paid': ['paidUser.trendVid.success'],
-  'reachai-backend::send-metadata-email-paid': ['paidUser.AImetadata.success'],
   'reachai-backend::flow-complete': ['yt.titles.Email-Send', 'PaidUser.Email-Send.success'],
   'reachai-backend::error-handler-paid': [
     'paidUser.videosfetched.error',
@@ -43,9 +38,23 @@ const SUBSCRIPTIONS = {
     'PaidUser.Email-Send.error',
   ],
 }
+
+// The paid flow is what Motia gave a BullMQ retry policy, so it runs on the
+// queue worker: delivery survives a crash, failures back off, and a message
+// that keeps failing lands in the DLQ instead of vanishing.
+const DURABLE_SUBSCRIPTIONS = {
+  'reachai-backend::fetch-videos-paid': ['paidUser.payment.success'],
+  'reachai-backend::fetch-niche-paid': ['paidUser.videosfetched.success'],
+  'reachai-backend::fetch-trending-paid': ['paidUser.Nichefetched.success'],
+  'reachai-backend::generate-metadata-paid': ['paidUser.trendVid.success'],
+  'reachai-backend::send-metadata-email-paid': ['paidUser.AImetadata.success'],
+}
+const PAID_ATTEMPTS = 3
+const DURABLE_TOPICS = new Set(Object.values(DURABLE_SUBSCRIPTIONS).flat())
+
 const emit = (topic, data) =>
   worker.trigger({
-    function_id: 'publish',
+    function_id: DURABLE_TOPICS.has(topic) ? 'iii::durable::publish' : 'publish',
     payload: { topic, data },
     action: TriggerAction.Void(),
   })
@@ -170,7 +179,7 @@ const paidStep = (id, description, retryKey, errorTopic, run) =>
           lastError: error.message,
           retry: { ...(job.retry ?? {}), [retryKey]: attempt },
         }).catch(() => {})
-        if (attempt >= 3) {
+        if (attempt >= PAID_ATTEMPTS) {
           await emit(errorTopic, { PaidJobId, email: data.email, error: error.message, attemptCount: attempt })
           return
         }
@@ -1364,6 +1373,16 @@ console.log('[reachai-backend] single-file worker registered with all routes and
 for (const [function_id, topics] of Object.entries(SUBSCRIPTIONS)) {
   for (const topic of topics) {
     worker.registerTrigger({ type: 'subscribe', function_id, config: { topic } })
+  }
+}
+
+for (const [function_id, topics] of Object.entries(DURABLE_SUBSCRIPTIONS)) {
+  for (const queue of topics) {
+    worker.registerTrigger({
+      type: 'durable:subscriber',
+      function_id,
+      config: { queue, max_retries: PAID_ATTEMPTS, backoff_ms: 1000 },
+    })
   }
 }
 

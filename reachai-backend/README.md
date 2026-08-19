@@ -11,7 +11,7 @@ ReachAI backend, migrated from **Motia** to the **iii** worker SDK. It is a sing
 | `emit({ topic, data })` | the `pubsub` worker's `publish` function (fire-and-forget fan-out) |
 | `state.get/set(scope, key)` | engine `state::get` / `state::set` (scopes `reachai-jobs`, `reachai-paidjobs`, `reachai-spam`) |
 | `logger.*` | `console.*` (captured by engine observability) |
-| `infrastructure.queue.maxRetries: 3` (BullMQ) | `paidStep()` wrapper — 3 attempts, counter in job state |
+| `infrastructure.queue.maxRetries: 3` (BullMQ) | the `queue` worker's `durable:subscriber` — 3 attempts, exponential backoff, DLQ |
 | `razorpay` npm package | direct REST calls to `api.razorpay.com/v1/orders` |
 | `motia dev` / workbench | iii console + `worker::add` (local install) |
 
@@ -32,7 +32,7 @@ ReachAI backend, migrated from **Motia** to the **iii** worker SDK. It is a sing
 
 **Free** (`reachai-jobs` state scope): submit → resolve-channel → fetch-videos → fetch-niche → fetch-trending → generate-titles → send-titles-email → done. Errors on any step emit `yt.*.error` → error-handler emails the user.
 
-**Paid** (`reachai-paidjobs`): create-order → verify/webhook → fetch-videos-paid → fetch-niche-paid → fetch-trending-paid → generate-metadata-paid → send-metadata-email-paid → done. Each step retries 3× then emits `paidUser.*.error` → error-handler-paid.
+**Paid** (`reachai-paidjobs`): create-order → verify/webhook → fetch-videos-paid → fetch-niche-paid → fetch-trending-paid → generate-metadata-paid → send-metadata-email-paid → done. These steps run on the `queue` worker: a failure is redelivered with exponential backoff up to three attempts, and the third emits `paidUser.*.error` → error-handler-paid, which is what mails the user. Delivery survives a restart, so a crash mid-step resumes instead of stranding the job.
 
 All steps are idempotent via duplicate-suppression flags (`videosFetched`, `nicheFetched`, `trendVidFetched`, `AiMetadatafetched`, `emailSent`) — a webhook + verify double-fire resumes instead of duplicating work.
 
@@ -68,7 +68,7 @@ docker compose up -d --build
 curl 'http://localhost:3111/status?jobId=none'   # -> 404 = engine + routes live
 ```
 
-Inside the container: the iii engine + the `http` worker (REST on **3111**) + the `state` worker (job storage) + the `pubsub` worker (topic fan-out between steps) + the `reachai-backend` worker (this code, whose single dependency the engine installs on first boot). The engine WebSocket (49134), stream API (3112), and Prometheus metrics (9464) are also exposed.
+Inside the container: the iii engine + the `http` worker (REST on **3111**) + the `state` worker (job storage) + the `pubsub` worker (topic fan-out between steps) + the `queue` worker (durable retries for the paid flow) + the `reachai-backend` worker (this code, whose single dependency the engine installs on first boot). The engine WebSocket (49134), stream API (3112), and Prometheus metrics (9464) are also exposed.
 
 **TLS / domain:** the engine does not terminate TLS. Put a reverse proxy (Caddy/Nginx) in front and route `/api/*` → 3111, `/ws` → 49134, `/stream/*` → 3112 — example configs in the [iii deployment docs](https://iii.dev/docs/using-iii/deployment). Point `NEXT_PUBLIC_BACKEND_URL` at your domain and set the Razorpay webhook URL to `https://<your-domain>/api/payment/webhook`.
 
@@ -121,15 +121,10 @@ Nothing here reimplements what a registry worker already does:
 | HTTP routes | `http` — routes are trigger config, not a server in this code |
 | Job state | `state` — `state::get` / `state::set`, three scopes |
 | Topic fan-out between steps | `pubsub` — `subscribe` triggers and the `publish` function |
+| Retries and DLQ on the paid flow | `queue` — `durable:subscriber`, `max_retries: 3`, `backoff_ms: 1000` |
 
-Still worth moving when someone has the appetite:
-
-- **LLM calls.** `aiJson()` posts to OpenRouter directly. `llm-router` plus
-  `provider-openrouter` would take the key, the model catalogue, fallback and
-  the JSON response format off this file. It needs the OpenRouter key moved
-  into the provider worker's configuration, so it is a deployment change too.
-- **Retries.** `paidStep()` counts attempts in job state. The `queue` worker's
-  `durable:subscriber` gives crash-safe retries and a dead-letter queue, which
-  in-process counting cannot.
-
-> Retries are in-process. For crash-safe retries in production, route the steps through the queue worker with `TriggerAction.Enqueue`.
+One is still hand-rolled: `aiJson()` posts to OpenRouter directly. `llm-router`
+plus `provider-openrouter` would take the key, the model catalogue, fallback
+and the JSON response format off this file. That one also moves the OpenRouter
+key out of `.env` and into the provider worker's configuration, so it is a
+deployment change as much as a code change.
