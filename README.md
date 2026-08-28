@@ -41,7 +41,7 @@ The system focuses on reliability and clarity by separating each step of the wor
 ## ⚙️ Tech Stack
 
 ### Backend
-- iii — worker SDK: functions and topics on the pubsub worker, job state on the state worker, HTTP routes on the http worker, durable retries on the queue worker, all declared in one worker-compose.yaml ([reachai-backend/README.md](reachai-backend/README.md))
+- iii — worker SDK: durable topics, retries and DLQ on the queue worker, job state on the state worker, HTTP routes on the http worker, all declared in one worker-compose.yaml ([reachai-backend/README.md](reachai-backend/README.md))
 - JavaScript (single-file worker)
 - Node.js
 - YouTube Data API

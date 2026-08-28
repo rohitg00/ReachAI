@@ -2,7 +2,6 @@ services:
   reachai:
     build:
       context: .
-    platform: linux/amd64
     ports:
       - "3111:3111"
     volumes:

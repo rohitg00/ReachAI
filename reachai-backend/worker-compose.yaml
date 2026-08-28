@@ -25,17 +25,13 @@ containers:
       host: 0.0.0.0
       port: 3111
 
-  pubsub:
-    worker: package://api.workers.iii.dev/pubsub
-    version: "0.21.3-rc.2"
-
   queue:
     worker: package://api.workers.iii.dev/queue
     version: "0.21.6"
 
   reachai-backend:
     worker: path://.
-    start_after: [state, http, pubsub, queue]
+    start_after: [state, http, queue]
     env_file: [.env]
     scripts:
       pre_run: npm install

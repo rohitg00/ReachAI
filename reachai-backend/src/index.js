@@ -37,9 +37,6 @@ const SUBSCRIPTIONS = {
     'paidUser.AImetadata.error',
     'PaidUser.Email-Send.error',
   ],
-}
-
-const DURABLE_SUBSCRIPTIONS = {
   'reachai-backend::fetch-videos-paid': ['paidUser.payment.success'],
   'reachai-backend::fetch-niche-paid': ['paidUser.videosfetched.success'],
   'reachai-backend::fetch-trending-paid': ['paidUser.Nichefetched.success'],
@@ -47,11 +44,10 @@ const DURABLE_SUBSCRIPTIONS = {
   'reachai-backend::send-metadata-email-paid': ['paidUser.AImetadata.success'],
 }
 const PAID_ATTEMPTS = 3
-const DURABLE_TOPICS = new Set(Object.values(DURABLE_SUBSCRIPTIONS).flat())
 
 const emit = (topic, data) =>
   worker.trigger({
-    function_id: DURABLE_TOPICS.has(topic) ? 'iii::durable::publish' : 'publish',
+    function_id: 'iii::durable::publish',
     payload: { topic, data },
     action: TriggerAction.Void(),
   })
@@ -1367,12 +1363,6 @@ function metadataEmailHtml(channelName, items) {
 console.log('[reachai-backend] single-file worker registered with all routes and flow steps')
 
 for (const [function_id, topics] of Object.entries(SUBSCRIPTIONS)) {
-  for (const topic of topics) {
-    worker.registerTrigger({ type: 'subscribe', function_id, config: { topic } })
-  }
-}
-
-for (const [function_id, topics] of Object.entries(DURABLE_SUBSCRIPTIONS)) {
   for (const queue of topics) {
     worker.registerTrigger({
       type: 'durable:subscriber',
