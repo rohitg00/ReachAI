@@ -83,16 +83,6 @@ const aiJson = async ({ system, user, temperature = 0.7, maxTokens }) => {
   return JSON.parse(result.choices?.[0]?.message?.content || '{}')
 }
 
-worker.registerFunction(
-  'auth::get_token',
-  async ({ provider }) => {
-    if (typeof provider !== 'string' || !provider.startsWith('email::')) return null
-    const password = process.env.RESEND_API_KEY
-    return password ? { type: 'api_key', username: 'resend', password } : null
-  },
-  { description: 'SMTP credential for the email worker: the Resend login, read from RESEND_API_KEY.' },
-)
-
 const sendEmail = ({ account = 'notifications', to, subject, html, text, replyTo }) =>
   worker.trigger({
     function_id: 'email::send',

@@ -35,9 +35,9 @@ All steps are idempotent via duplicate-suppression flags (`videosFetched`, `nich
 
 ## Environment variables
 
-See [`env.example`](env.example): `OPENAI_API_KEY` (OpenRouter), `YOUTUBE_API_KEY`, `RESEND_API_KEY`, `MERA_EMAIL`, `FRONTEND_URL`, `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`. The two sender addresses (`RESEND_FROM_EMAIL` / `RESEND_FROM_SUPPORTEMAIL` before) are now the `from:` of the `notifications` and `support` accounts in [`email/config.yaml`](email/config.yaml); edit them there.
+See [`env.example`](env.example): `OPENAI_API_KEY` (OpenRouter), `YOUTUBE_API_KEY`, `RESEND_API_KEY`, `MERA_EMAIL`, `FRONTEND_URL`, `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`. The two sender addresses are the `from:` of the `notifications` and `support` accounts in `worker-compose.yaml`; edit them there.
 
-`worker-compose.yaml` hands `.env` to the worker through `env_file`, so the same file serves a local run and the container.
+`worker-compose.yaml` hands `.env` to the worker through `env_file`, and the `email` container's `config_override` references `${RESEND_API_KEY}`, which the engine expands from its own environment. So for a local run export the file first (`set -a; . ./.env; set +a`) so the managed engine inherits it; `docker-compose.yml` passes `.env` to the container for the same reason.
 
 ## The project file
 
@@ -48,7 +48,7 @@ See [`env.example`](env.example): `OPENAI_API_KEY` (OpenRouter), `YOUTUBE_API_KE
 | `state` | `package://api.workers.iii.dev/state` 0.22.2 | job storage, file-backed at `./data/state_store.db` |
 | `http` | `package://api.workers.iii.dev/http` 0.21.4 | the REST surface on port 3111 |
 | `queue` | `package://api.workers.iii.dev/queue` 0.21.6 | every topic between the flow steps: durable delivery, retries, DLQ |
-| `email` | `package://api.workers.iii.dev/email` 0.1.7 | outbound mail over SMTP; `working_dir: ./email`, so it reads [`email/config.yaml`](email/config.yaml): two accounts, `notifications` and `support`, both on `smtp.resend.com:587` |
+| `email` | `package://api.workers.iii.dev/email` 0.2.0 | outbound mail over SMTP; two accounts in its `config_override`, `notifications` and `support`, both on `smtp.resend.com:587` with the Resend login (`resend` / `${RESEND_API_KEY}`) |
 | `reachai-backend` | `path://.` | this code; `start_after` the four above, `npm install` then `node src/index.js` |
 
 The `engine:` block makes `iii compose --up` start the engine itself (on `ws://127.0.0.1:49134`) and stop it with the project. Registry packages are downloaded on the first `up` and cached under `~/.iii/compose/packages`. Generated worker configs land in `./config/`, runtime data in `./data/`; both are ignored by git.
@@ -102,7 +102,7 @@ curl 'http://localhost:3111/status?jobId=none'   # -> 404 = engine + routes live
 |---|---|
 | `iii-sdk` (`package.json`) | `0.23.0-rc.6` |
 | iii CLI / engine (`Dockerfile`, install command above) | `iii/v0.23.0-rc.6` |
-| registry workers (`worker-compose.yaml`) | state 0.22.2, http 0.21.4, queue 0.21.6, email 0.1.7 |
+| registry workers (`worker-compose.yaml`) | state 0.22.2, http 0.21.4, queue 0.21.6, email 0.2.0 |
 
 0.23.0 is the release where `iii compose` becomes the way to run a project: engine-managed `workers:` entries in `config.yaml` are rejected (`UNSUPPORTED_CONFIG_WORKERS`) and `iii worker add` is gone, so the previous `config.yaml` no longer exists here. The SDK reads `III_URL` and `III_NAMESPACE` from the daemon, which is why the worker registers in the `reachai` namespace without code changes.
 
@@ -119,9 +119,9 @@ Nothing here reimplements what a registry worker already does:
 | HTTP routes | `http`: routes are trigger config, not a server in this code |
 | Job state | `state`: `state::get` / `state::set`, three scopes |
 | Topics between steps, retries and DLQ | `queue`: `durable:subscriber` triggers and `iii::durable::publish`, `max_retries: 3`, `backoff_ms: 1000` |
-| Outbound mail | `email`: `email::send` with an `account`, `to`, `subject`, `html`/`text`, `reply_to`; the `from` address is the account's, set in `email/config.yaml` |
+| Outbound mail | `email`: `email::send` with an `account`, `to`, `subject`, `html`/`text`, `reply_to`; the `from` address and the SMTP login are the account's, set in the compose file |
 
-The `email` worker takes its SMTP login from `auth::get_token` (provider key `email::<account>`). The registry has no credentials vault worker at the moment, so `src/worker.js` answers that call itself for `email::*` with the Resend SMTP login (`resend` / `RESEND_API_KEY`). Six lines, and the key never leaves this worker's environment. When a vault worker exists, delete that function and seed it with `auth::set_token` instead. The config lives in its own file rather than a compose `config_override` because email 0.1.7 reads `./config.yaml` from its working directory and does not yet honour the `III_CONFIG` file the daemon writes.
+`email` 0.2.0 reads its accounts from the configuration worker (what `config_override` feeds) and hot-reloads them; the login is `smtp.username` / `smtp.password` on the account, with `${RESEND_API_KEY}` expanded by the engine so the key never lands in the stored value.
 
 `sendEmail` no longer passes Resend's `Idempotency-Key`; the paid flow's `emailSent` flag is what prevents a duplicate metadata mail on redelivery.
 
