@@ -80,7 +80,7 @@ Note for macOS: `pubsub` 0.21.3-rc.2 currently ships a `x86_64-unknown-linux-gnu
 
 ## Deploy (replaces Motia Cloud)
 
-The image is `node:22-bookworm-slim` plus the pinned iii binary; it runs the same `iii compose --up` as above, as the unprivileged `node` user. Files: `Dockerfile`, `docker-compose.yml`, `worker-compose.yaml`, `.env`.
+The image is `node:22-bookworm-slim` plus the pinned iii binary (the glibc build, `III_USE_GLIBC=1`: the daemon fetches registry packages for its own target, and the registry ships `x86_64-unknown-linux-gnu`, not musl, for pubsub). It runs the same `iii compose --up` as above, as the unprivileged `node` user. Files: `Dockerfile`, `docker-compose.yml`, `worker-compose.yaml`, `.env`.
 
 ```bash
 # 1. fill in real secrets (never commit .env)
@@ -93,7 +93,7 @@ docker compose up -d --build
 curl 'http://localhost:3111/status?jobId=none'   # -> 404 = engine + routes live
 ```
 
-Only port **3111** (the `http` worker) is published. The engine WebSocket stays on the container's loopback, which is where the five workers reach it; nothing outside the container needs it. The image is built for `linux/amd64` (`platform:` in `docker-compose.yml`) because that is the platform the registry ships every pinned worker for.
+`docker-compose.yml` mounts `.env` read-only into the container, so the same `env_file` line in `worker-compose.yaml` serves both runs and no secret is baked into the image. Only port **3111** (the `http` worker) is published. The engine WebSocket stays on the container's loopback, which is where the five workers reach it; nothing outside the container needs it. The image is built for `linux/amd64` (`platform:` in `docker-compose.yml`) because that is the platform the registry ships every pinned worker for.
 
 **TLS / domain:** the `http` worker does not terminate TLS. Put a reverse proxy (Caddy/Nginx) in front and route `/api/*`, `/submit` and `/status` to 3111. Point `NEXT_PUBLIC_BACKEND_URL` at your domain and set the Razorpay webhook URL to `https://<your-domain>/api/payment/webhook`.
 

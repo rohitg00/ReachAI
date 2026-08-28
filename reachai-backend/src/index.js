@@ -39,9 +39,6 @@ const SUBSCRIPTIONS = {
   ],
 }
 
-// The paid flow is what Motia gave a BullMQ retry policy, so it runs on the
-// queue worker: delivery survives a crash, failures back off, and a message
-// that keeps failing lands in the DLQ instead of vanishing.
 const DURABLE_SUBSCRIPTIONS = {
   'reachai-backend::fetch-videos-paid': ['paidUser.payment.success'],
   'reachai-backend::fetch-niche-paid': ['paidUser.videosfetched.success'],
@@ -161,7 +158,6 @@ const freeStep = (id, description, run) =>
     { description },
   )
 
-/** Three attempts, counting in job state, so a retry survives a restart. */
 const paidStep = (id, description, retryKey, errorTopic, run) =>
   worker.registerFunction(
     id,

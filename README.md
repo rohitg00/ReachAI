@@ -41,7 +41,7 @@ The system focuses on reliability and clarity by separating each step of the wor
 ## ⚙️ Tech Stack
 
 ### Backend
-- iii — worker SDK: event-driven workflow orchestration (functions + topics), engine-managed state, HTTP triggers ([reachai-backend/README.md](reachai-backend/README.md))
+- iii — worker SDK: functions and topics on the pubsub worker, job state on the state worker, HTTP routes on the http worker, durable retries on the queue worker, all declared in one worker-compose.yaml ([reachai-backend/README.md](reachai-backend/README.md))
 - JavaScript (single-file worker)
 - Node.js
 - YouTube Data API
@@ -68,7 +68,7 @@ ReachAI uses an event-driven backend architecture where each step is an independ
 
 **Paid flow:** `POST /api/payment/create-order` → Razorpay checkout → verify / webhook → fetch-videos → fetch-niche → fetch-trending → generate-metadata → send-metadata-email
 
-Job state lives in the engine's state store (scopes `reachai-jobs` / `reachai-paidjobs`); the frontend polls `/status` and `/api/payment/paid-jobs/status`. See [reachai-backend/README.md](reachai-backend/README.md) for the full API and the Motia to iii migration notes.
+Job state lives in the `state` worker (scopes `reachai-jobs` / `reachai-paidjobs`); the frontend polls `/status` and `/api/payment/paid-jobs/status`. See [reachai-backend/README.md](reachai-backend/README.md) for the full API and the Motia to iii migration notes.
 
 
 
