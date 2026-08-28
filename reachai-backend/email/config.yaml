@@ -1,0 +1,18 @@
+accounts:
+  notifications:
+    provider: smtp
+    from: "ReachAI <noreply@reachaiapp.online>"
+    smtp:
+      host: smtp.resend.com
+      port: 587
+      starttls: true
+  support:
+    provider: smtp
+    from: "ReachAI Support <support@reachaiapp.online>"
+    smtp:
+      host: smtp.resend.com
+      port: 587
+      starttls: true
+limits:
+  max_recipients: 10
+  send_timeout_ms: 30000

@@ -29,9 +29,14 @@ containers:
     worker: package://api.workers.iii.dev/queue
     version: "0.21.6"
 
+  email:
+    worker: package://api.workers.iii.dev/email
+    version: "0.1.7"
+    working_dir: ./email
+
   reachai-backend:
     worker: path://.
-    start_after: [state, http, queue]
+    start_after: [state, http, queue, email]
     env_file: [.env]
     scripts:
       pre_run: npm install
