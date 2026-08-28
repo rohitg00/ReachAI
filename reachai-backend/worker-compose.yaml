@@ -1,43 +1,42 @@
-# The compose format, validated against engine 0.22.1-alpha.13 with
-# iii-sdk 0.22.1-alpha.13 (the pinned dependency). It ships in the iii alpha
-# channel; the stable release does not carry `iii compose` yet.
-#
-#   curl -fsSL https://install.iii.dev/iii/main/install.sh | \
-#     III_RELEASE_TAG=iii-alpha/v0.22.1-alpha.13 sh   # engine with compose
-#   iii compose --namespace reachai                   # daemon, from this directory
-#   iii trigger compose::up --namespace reachai file=./worker-compose.yaml
-#
-# The container image runs the stable engine and config.yaml instead, because
-# the alpha channel publishes no image. Both describe the same three workers.
 namespace: reachai
+startup_timeout: 5m
+stop_timeout: 10s
+
+engine:
+  url: ws://127.0.0.1:49134
 
 containers:
-  # Job state for both flows: scopes reachai-jobs, reachai-paidjobs, reachai-spam.
   state:
-    worker: package://state
-    version: 0.21.6
+    worker: package://api.workers.iii.dev/state
+    version: "0.22.2"
+    config_name: state
+    config_override:
+      adapter:
+        name: kv
+        config:
+          store_method: file_based
+          file_path: ./data/state_store.db
 
-  # The REST surface every ReachAI route is published on (port 3111).
   http:
-    worker: package://http
-    version: 0.21.3
+    worker: package://api.workers.iii.dev/http
+    version: "0.21.4"
+    config_name: http
+    config_override:
+      host: 0.0.0.0
+      port: 3111
 
-  # Topic fan-out between the flow steps.
   pubsub:
-    worker: package://pubsub
-    version: 0.21.2
+    worker: package://api.workers.iii.dev/pubsub
+    version: "0.21.3-rc.2"
 
-  # Durable queues: the paid flow's retries and DLQ.
   queue:
-    worker: package://queue
-    version: 0.21.3
+    worker: package://api.workers.iii.dev/queue
+    version: "0.21.6"
 
-  # This directory. The key matches `name:` in iii.worker.yaml, which the
-  # format requires for a path:// worker that ships a manifest.
   reachai-backend:
     worker: path://.
-    depends_on: [state, http, pubsub, queue]
+    start_after: [state, http, pubsub, queue]
+    env_file: [.env]
     scripts:
-      # Compose does not run the manifest's install script, so the dependency
-      # install is declared here.
-      pre_start: "npm install"
+      pre_run: npm install
+      run: node src/index.js

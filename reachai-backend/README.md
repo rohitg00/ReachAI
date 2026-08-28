@@ -6,14 +6,14 @@ ReachAI backend, migrated from **Motia** to the **iii** worker SDK. It is a sing
 
 | Motia | iii equivalent |
 |---|---|
-| `type: 'api'` step (`path`, `method`) | function bound to the engine's `http` trigger type (`{ api_path, http_method }`) |
+| `type: 'api'` step (`path`, `method`) | function bound to the `http` worker's `http` trigger type (`{ api_path, http_method }`) |
 | `type: 'event'` step (`subscribes`) | function bound to the `pubsub` worker's `subscribe` trigger on the same topic |
 | `emit({ topic, data })` | the `pubsub` worker's `publish` function (fire-and-forget fan-out) |
-| `state.get/set(scope, key)` | engine `state::get` / `state::set` (scopes `reachai-jobs`, `reachai-paidjobs`, `reachai-spam`) |
+| `state.get/set(scope, key)` | `state::get` / `state::set` on the `state` worker (scopes `reachai-jobs`, `reachai-paidjobs`, `reachai-spam`) |
 | `logger.*` | `console.*` (captured by engine observability) |
-| `infrastructure.queue.maxRetries: 3` (BullMQ) | the `queue` worker's `durable:subscriber` — 3 attempts, exponential backoff, DLQ |
+| `infrastructure.queue.maxRetries: 3` (BullMQ) | the `queue` worker's `durable:subscriber`: 3 attempts, exponential backoff, DLQ |
 | `razorpay` npm package | direct REST calls to `api.razorpay.com/v1/orders` |
-| `motia dev` / workbench | iii console + `worker::add` (local install) |
+| `motia dev` / workbench | `iii compose` (`worker-compose.yaml` declares the engine and every worker) |
 
 ## HTTP API
 
@@ -34,28 +34,53 @@ ReachAI backend, migrated from **Motia** to the **iii** worker SDK. It is a sing
 
 **Paid** (`reachai-paidjobs`): create-order → verify/webhook → fetch-videos-paid → fetch-niche-paid → fetch-trending-paid → generate-metadata-paid → send-metadata-email-paid → done. These steps run on the `queue` worker: a failure is redelivered with exponential backoff up to three attempts, and the third emits `paidUser.*.error` → error-handler-paid, which is what mails the user. Delivery survives a restart, so a crash mid-step resumes instead of stranding the job.
 
-All steps are idempotent via duplicate-suppression flags (`videosFetched`, `nicheFetched`, `trendVidFetched`, `AiMetadatafetched`, `emailSent`) — a webhook + verify double-fire resumes instead of duplicating work.
+All steps are idempotent via duplicate-suppression flags (`videosFetched`, `nicheFetched`, `trendVidFetched`, `AiMetadatafetched`, `emailSent`). A webhook + verify double-fire resumes instead of duplicating work.
 
 ## Environment variables
 
 See [`env.example`](env.example). Same names as the Motia version: `OPENAI_API_KEY` (OpenRouter), `YOUTUBE_API_KEY`, `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `RESEND_FROM_SUPPORTEMAIL`, `MERA_EMAIL`, `FRONTEND_URL`, `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`.
 
+`worker-compose.yaml` hands `.env` to the worker through `env_file`, so the same file serves a local run and the container.
+
+## The project file
+
+[`worker-compose.yaml`](worker-compose.yaml) is the whole deployment, the way `docker-compose.yml` is for containers:
+
+| Container | Source | Role |
+|---|---|---|
+| `state` | `package://api.workers.iii.dev/state` 0.22.2 | job storage, file-backed at `./data/state_store.db` |
+| `http` | `package://api.workers.iii.dev/http` 0.21.4 | the REST surface on port 3111 |
+| `pubsub` | `package://api.workers.iii.dev/pubsub` 0.21.3-rc.2 | topic fan-out between the flow steps |
+| `queue` | `package://api.workers.iii.dev/queue` 0.21.6 | durable retries and DLQ for the paid flow |
+| `reachai-backend` | `path://.` | this code; `start_after` the four above, `npm install` then `node src/index.js` |
+
+The `engine:` block makes `iii compose --up` start the engine itself (on `ws://127.0.0.1:49134`) and stop it with the project. Registry packages are downloaded on the first `up` and cached under `~/.iii/compose/packages`. Generated worker configs land in `./config/`, runtime data in `./data/`; both are ignored by git.
+
 ## Run
 
-Install as a local iii worker (engine must be running):
+Needs Node 22 and the iii CLI:
 
 ```bash
-npm install
-III_URL=ws://localhost:49134 node src/index.js   # manual
-# or install engine-managed (auto-restarts on edits):
-iii worker add .
+curl -fsSL https://install.iii.dev/iii/main/install.sh | III_RELEASE_TAG=iii/v0.23.0-rc.5 sh
+cp env.example .env
+iii compose --namespace reachai --up --file worker-compose.yaml
+curl 'http://localhost:3111/status?jobId=none'   # 404 = engine + routes live
 ```
 
-HTTP routes are served by the engine's `http` worker (default port **3111**). Route bindings propagate live through the engine — no http restart needed.
+The daemon stays in the foreground; Ctrl-C (SIGINT) stops the worker, the four registry workers and the engine in order. From another shell:
+
+```bash
+iii trigger compose::status --namespace reachai file=worker-compose.yaml
+iii trigger compose::restart --namespace reachai file=worker-compose.yaml container=reachai-backend
+```
+
+To attach to an engine you already run instead of a managed one, add `--engine ws://host:49134`; that overrides the `engine.url` in the file.
+
+Note for macOS: `pubsub` 0.21.3-rc.2 currently ships a `x86_64-unknown-linux-gnu` binary only, so on a Mac the project starts once you point that container at a locally built `pubsub` (`path://` plus `scripts.run`). Linux hosts and the container below need no change.
 
 ## Deploy (replaces Motia Cloud)
 
-The backend ships as a self-contained Docker deployment built on the official `iiidev/iii:0.22.1` image (distroless, non-root), pinned so a new engine release cannot change what a rebuild ships. Files: `Dockerfile`, `docker-compose.yml`, `config.yaml`, `.env`.
+The image is `node:22-bookworm-slim` plus the pinned iii binary; it runs the same `iii compose --up` as above, as the unprivileged `node` user. Files: `Dockerfile`, `docker-compose.yml`, `worker-compose.yaml`, `.env`.
 
 ```bash
 # 1. fill in real secrets (never commit .env)
@@ -68,49 +93,27 @@ docker compose up -d --build
 curl 'http://localhost:3111/status?jobId=none'   # -> 404 = engine + routes live
 ```
 
-Inside the container: the iii engine + the `http` worker (REST on **3111**) + the `state` worker (job storage) + the `pubsub` worker (topic fan-out between steps) + the `queue` worker (durable retries for the paid flow) + the `reachai-backend` worker (this code, whose single dependency the engine installs on first boot). The engine WebSocket (49134), stream API (3112), and Prometheus metrics (9464) are also exposed.
+Only port **3111** (the `http` worker) is published. The engine WebSocket stays on the container's loopback, which is where the five workers reach it; nothing outside the container needs it. The image is built for `linux/amd64` (`platform:` in `docker-compose.yml`) because that is the platform the registry ships every pinned worker for.
 
-**TLS / domain:** the engine does not terminate TLS. Put a reverse proxy (Caddy/Nginx) in front and route `/api/*` → 3111, `/ws` → 49134, `/stream/*` → 3112 — example configs in the [iii deployment docs](https://iii.dev/docs/using-iii/deployment). Point `NEXT_PUBLIC_BACKEND_URL` at your domain and set the Razorpay webhook URL to `https://<your-domain>/api/payment/webhook`.
+**TLS / domain:** the `http` worker does not terminate TLS. Put a reverse proxy (Caddy/Nginx) in front and route `/api/*`, `/submit` and `/status` to 3111. Point `NEXT_PUBLIC_BACKEND_URL` at your domain and set the Razorpay webhook URL to `https://<your-domain>/api/payment/webhook`.
 
-**Regenerating the assets** (won't overwrite your edits): `iii project generate-docker`.
+**Data:** job state, the durable queue and observability data live in the `reachai_data` volume (`./data` inside the container); downloaded worker packages and compose state live in `iii_home`. `docker compose down` keeps both, `down -v` wipes them.
 
-**Data:** job state persists in the `iii_data` and `iii_config` named volumes — `docker compose down` keeps them, `down -v` wipes them.
+**First boot needs network** to fetch the four registry workers into `iii_home`; later boots reuse the cache.
 
-## Running on the alpha channel
+## Versions
 
-`iii-sdk` is pinned to `0.22.1-alpha.13`, the alpha that carries **namespace
-routing** and the supervisor contract (`III_URL`, `III_NAMESPACE`,
-`III_CONFIG`). Two reasons to be on it rather than the stable `0.22.1`:
+| What | Pin |
+|---|---|
+| `iii-sdk` (`package.json`) | `0.23.0-rc.5` |
+| iii CLI / engine (`Dockerfile`, install command above) | `iii/v0.23.0-rc.5` |
+| registry workers (`worker-compose.yaml`) | state 0.22.2, http 0.21.4, pubsub 0.21.3-rc.2, queue 0.21.6 |
 
-- It is the only channel where `iii compose` exists, so `worker-compose.yaml`
-  in this directory actually runs.
-- It leaves nothing to change when the work lands in a stable release. The
-  worker code already reads the environment a supervisor injects.
+0.23.0 is the release where `iii compose` becomes the way to run a project: engine-managed `workers:` entries in `config.yaml` are rejected (`UNSUPPORTED_CONFIG_WORKERS`) and `iii worker add` is gone, so the previous `config.yaml` no longer exists here. The SDK reads `III_URL` and `III_NAMESPACE` from the daemon, which is why the worker registers in the `reachai` namespace without code changes.
 
-Against a stable engine the alpha SDK behaves exactly like the stable one: with
-no namespace configured it sends no namespace, so the Docker image below (which
-runs the stable engine, since the alpha channel publishes no image) is
-unaffected by the pin.
+`pubsub` is on its `0.21.3-rc.2` pre-release because `0.21.2` predates namespace routing: the daemon rejects it with `WORKER_IGNORED_NAMESPACE`. When 0.23.0 and pubsub 0.21.3 ship as stable, the two tags move (`III_RELEASE_TAG` in the Dockerfile, the pubsub `version:`); no code changes.
 
-**Running the compose project** needs the alpha engine:
-
-```bash
-curl -fsSL https://install.iii.dev/iii/main/install.sh | \
-  III_RELEASE_TAG=iii-alpha/v0.22.1-alpha.13 sh
-
-iii compose --namespace reachai          # daemon, from this directory
-iii trigger compose::up --namespace reachai file=./worker-compose.yaml
-```
-
-Measured on that engine: `pre_start` runs `npm install`, then the worker is
-`ready` in about 750ms, registered in the `reachai` namespace. The same code on
-`iii-sdk` 0.22.1 (stable) is rejected with `WORKER_IGNORED_NAMESPACE`, because
-that SDK predates namespaces and lands in `default` whatever compose injects —
-which is exactly why the pin is on the alpha.
-
-**When the stable release ships**, three lines move: `iii-sdk` in
-`package.json`, the image tag in `Dockerfile`, and the two package versions in
-`worker-compose.yaml`. No code changes.
+Measured on this pin: the four registry workers are `ready` 1.4 s after `up`, and `reachai-backend` is `ready` at 1.6 s with 22 functions, 8 HTTP routes, 19 pubsub subscriptions and 5 durable subscribers registered in the `reachai` namespace.
 
 ## What the platform provides
 
@@ -118,10 +121,10 @@ Nothing here reimplements what a registry worker already does:
 
 | Concern | Worker |
 |---|---|
-| HTTP routes | `http` — routes are trigger config, not a server in this code |
-| Job state | `state` — `state::get` / `state::set`, three scopes |
-| Topic fan-out between steps | `pubsub` — `subscribe` triggers and the `publish` function |
-| Retries and DLQ on the paid flow | `queue` — `durable:subscriber`, `max_retries: 3`, `backoff_ms: 1000` |
+| HTTP routes | `http`: routes are trigger config, not a server in this code |
+| Job state | `state`: `state::get` / `state::set`, three scopes |
+| Topic fan-out between steps | `pubsub`: `subscribe` triggers and the `publish` function |
+| Retries and DLQ on the paid flow | `queue`: `durable:subscriber`, `max_retries: 3`, `backoff_ms: 1000` |
 
 One is still hand-rolled: `aiJson()` posts to OpenRouter directly. `llm-router`
 plus `provider-openrouter` would take the key, the model catalogue, fallback
