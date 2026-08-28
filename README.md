@@ -309,10 +309,6 @@ If there is no catch, the function crashes
 That’s pure JavaScript behavior.
 
 ### What does throw error mean inside an event handler?
-(Written for Motia. Under iii the paid steps keep the same three-attempt
-policy through the `paidStep()` wrapper in `src/index.js`, with the counter in
-job state instead of a queue.)
-
 In Motia, handler is not just a function —
 it’s a job executed by a queue.
 

@@ -4,7 +4,7 @@ import crypto from 'node:crypto'
 const worker = registerWorker(process.env.III_URL ?? 'ws://127.0.0.1:49134', {
   workerName: 'reachai-backend',
   workerDescription:
-    'ReachAI backend: YouTube title/metadata optimization flows (free + paid) with Resend emails and Razorpay payments. Migrated from Motia.',
+    'ReachAI backend: YouTube title/metadata optimization flows (free + paid) with Resend emails and Razorpay payments.',
   invocationTimeoutMs: 180000,
 })
 

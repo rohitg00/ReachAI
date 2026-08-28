@@ -1,19 +1,6 @@
 # ReachAI Backend (iii)
 
-ReachAI backend, migrated from **Motia** to the **iii** worker SDK. It is a single-file worker: [`src/index.js`](src/index.js).
-
-## Concept mapping (Motia → iii)
-
-| Motia | iii equivalent |
-|---|---|
-| `type: 'api'` step (`path`, `method`) | function bound to the `http` worker's `http` trigger type (`{ api_path, http_method }`) |
-| `type: 'event'` step (`subscribes`) | function bound to the `queue` worker's `durable:subscriber` trigger on the same topic |
-| `emit({ topic, data })` | the `queue` worker's `iii::durable::publish` function |
-| `state.get/set(scope, key)` | `state::get` / `state::set` on the `state` worker (scopes `reachai-jobs`, `reachai-paidjobs`, `reachai-spam`) |
-| `logger.*` | `console.*` (captured by engine observability) |
-| `infrastructure.queue.maxRetries: 3` (BullMQ) | the same `durable:subscriber`: 3 attempts, exponential backoff, DLQ |
-| `razorpay` npm package | direct REST calls to `api.razorpay.com/v1/orders` |
-| `motia dev` / workbench | `iii compose` (`worker-compose.yaml` declares the engine and every worker) |
+ReachAI backend on the **iii** worker SDK. It is a single-file worker, [`src/index.js`](src/index.js), and one `worker-compose.yaml` that declares the engine and every worker it runs with.
 
 ## HTTP API
 
@@ -26,7 +13,7 @@ ReachAI backend, migrated from **Motia** to the **iii** worker SDK. It is a sing
 | `/api/payment/verify` | POST | Verify Razorpay checkout signature |
 | `/api/payment/webhook` | POST | Razorpay webhook (HMAC-verified) |
 | `/api/payment/paid-jobs/status?PaidJobId=` | GET | Poll paid-job progress (iii addition) |
-| `/api/jobs/:jobId/retry` | POST | Retry a failed paid job from the first incomplete step (implemented in iii; stub in Motia) |
+| `/api/jobs/:jobId/retry` | POST | Retry a failed paid job from the first incomplete step |
 
 ## Flows
 
@@ -40,7 +27,7 @@ All steps are idempotent via duplicate-suppression flags (`videosFetched`, `nich
 
 ## Environment variables
 
-See [`env.example`](env.example). Same names as the Motia version: `OPENAI_API_KEY` (OpenRouter), `YOUTUBE_API_KEY`, `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `RESEND_FROM_SUPPORTEMAIL`, `MERA_EMAIL`, `FRONTEND_URL`, `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`.
+See [`env.example`](env.example): `OPENAI_API_KEY` (OpenRouter), `YOUTUBE_API_KEY`, `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `RESEND_FROM_SUPPORTEMAIL`, `MERA_EMAIL`, `FRONTEND_URL`, `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`.
 
 `worker-compose.yaml` hands `.env` to the worker through `env_file`, so the same file serves a local run and the container.
 
@@ -77,7 +64,7 @@ iii trigger compose::restart --namespace reachai file=worker-compose.yaml contai
 
 To attach to an engine you already run instead of a managed one, add `--engine ws://host:49134`; that overrides the `engine.url` in the file.
 
-## Deploy (replaces Motia Cloud)
+## Deploy
 
 The image is `node:22-bookworm-slim` plus the pinned iii binary (the glibc build, `III_USE_GLIBC=1`, because the daemon fetches registry packages for its own target and every worker ships a gnu build). It runs the same `iii compose --up` as above, as the unprivileged `node` user, on whatever platform you build it for. Files: `Dockerfile`, `docker-compose.yml`, `worker-compose.yaml`, `.env`.
 
