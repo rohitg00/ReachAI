@@ -58,7 +58,7 @@ The `engine:` block makes `iii compose --up` start the engine itself (on `ws://1
 Needs Node 22 and the iii CLI:
 
 ```bash
-curl -fsSL https://install.iii.dev/iii/main/install.sh | III_RELEASE_TAG=iii/v0.23.0-rc.5 sh
+curl -fsSL https://install.iii.dev/iii/main/install.sh | III_RELEASE_TAG=iii/v0.23.0-rc.6 sh
 cp env.example .env
 iii compose --namespace reachai --up --file worker-compose.yaml
 curl 'http://localhost:3111/status?jobId=none'   # 404 = engine + routes live
@@ -100,8 +100,8 @@ curl 'http://localhost:3111/status?jobId=none'   # -> 404 = engine + routes live
 
 | What | Pin |
 |---|---|
-| `iii-sdk` (`package.json`) | `0.23.0-rc.5` |
-| iii CLI / engine (`Dockerfile`, install command above) | `iii/v0.23.0-rc.5` |
+| `iii-sdk` (`package.json`) | `0.23.0-rc.6` |
+| iii CLI / engine (`Dockerfile`, install command above) | `iii/v0.23.0-rc.6` |
 | registry workers (`worker-compose.yaml`) | state 0.22.2, http 0.21.4, queue 0.21.6, email 0.1.7 |
 
 0.23.0 is the release where `iii compose` becomes the way to run a project: engine-managed `workers:` entries in `config.yaml` are rejected (`UNSUPPORTED_CONFIG_WORKERS`) and `iii worker add` is gone, so the previous `config.yaml` no longer exists here. The SDK reads `III_URL` and `III_NAMESPACE` from the daemon, which is why the worker registers in the `reachai` namespace without code changes.
