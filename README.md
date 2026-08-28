@@ -68,7 +68,7 @@ ReachAI uses an event-driven backend architecture where each step is an independ
 
 **Paid flow:** `POST /api/payment/create-order` → Razorpay checkout → verify / webhook → fetch-videos → fetch-niche → fetch-trending → generate-metadata → send-metadata-email
 
-Job state lives in the `state` worker (scopes `reachai-jobs` / `reachai-paidjobs`); the frontend polls `/status` and `/api/payment/paid-jobs/status`. See [reachai-backend/README.md](reachai-backend/README.md) for the full API and the Motia to iii migration notes.
+Job state lives in the `state` worker (scopes `reachai-jobs` / `reachai-paidjobs`); the frontend polls `/status` and `/api/payment/paid-jobs/status`. See [reachai-backend/README.md](reachai-backend/README.md) for the full API and how it runs.
 
 
 
