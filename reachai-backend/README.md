@@ -45,10 +45,10 @@ See [`env.example`](env.example): `OPENAI_API_KEY` (OpenRouter), `YOUTUBE_API_KE
 
 | Container | Source | Role |
 |---|---|---|
-| `state` | `package://api.workers.iii.dev/state` 0.22.2 | job storage, file-backed at `./data/state_store.db` |
-| `http` | `package://api.workers.iii.dev/http` 0.21.4 | the REST surface on port 3111 |
-| `queue` | `package://api.workers.iii.dev/queue` 0.21.6 | every topic between the flow steps: durable delivery, retries, DLQ |
-| `email` | `package://api.workers.iii.dev/email` 0.2.0 | outbound mail over SMTP; two accounts in its `config_override`, `notifications` and `support`, both on `smtp.resend.com:587` with the Resend login (`resend` / `${RESEND_API_KEY}`) |
+| `state` | `package://api.workers.iii.dev/state` 0.22.6 | job storage, file-backed at `./data/state_store.db` |
+| `http` | `package://api.workers.iii.dev/http` 0.21.7 | the REST surface on port 3111 |
+| `queue` | `package://api.workers.iii.dev/queue` 0.21.9 | every topic between the flow steps: durable delivery, retries, DLQ |
+| `email` | `package://api.workers.iii.dev/email` 0.1.9 | outbound mail over SMTP; two accounts in its `config_override`, `notifications` and `support`, both on `smtp.resend.com:587` with the Resend login (`resend` / `${RESEND_API_KEY}`) |
 | `reachai-backend` | `path://.` | this code; `start_after` the four above, `npm install` then `node src/index.js` |
 
 The `engine:` block makes `iii compose --up` start the engine itself (on `ws://127.0.0.1:49134`) and stop it with the project. Registry packages are downloaded on the first `up` and cached under `~/.iii/compose/packages`. Generated worker configs land in `./config/`, runtime data in `./data/`; both are ignored by git.
@@ -58,7 +58,7 @@ The `engine:` block makes `iii compose --up` start the engine itself (on `ws://1
 Needs Node 22 and the iii CLI:
 
 ```bash
-curl -fsSL https://install.iii.dev/iii/main/install.sh | III_RELEASE_TAG=iii/v0.23.0-rc.6 sh
+curl -fsSL https://install.iii.dev/iii/main/install.sh | III_RELEASE_TAG=iii/v0.23.0 sh
 cp env.example .env
 iii compose --namespace reachai --up --file worker-compose.yaml
 curl 'http://localhost:3111/status?jobId=none'   # 404 = engine + routes live
@@ -75,7 +75,7 @@ To attach to an engine you already run instead of a managed one, add `--engine w
 
 ## Deploy
 
-The image is `node:22-bookworm-slim` plus the pinned iii binary (the glibc build, `III_USE_GLIBC=1`, because the daemon fetches registry packages for its own target and every worker ships a gnu build). It runs the same `iii compose --up` as above, as the unprivileged `node` user, on whatever platform you build it for. Files: `Dockerfile`, `docker-compose.yml`, `worker-compose.yaml`, `.env`.
+The image is `node:22-trixie-slim` plus the pinned iii binary (the glibc build, `III_USE_GLIBC=1`, because the daemon fetches registry packages for its own target and every worker ships a gnu build). Debian 13 is required: the `queue` 0.21.9 and `email` 0.1.9 gnu builds link against glibc 2.38, which `bookworm` (2.36) does not have. It runs the same `iii compose --up` as above, as the unprivileged `node` user, on whatever platform you build it for. Files: `Dockerfile`, `docker-compose.yml`, `worker-compose.yaml`, `.env`.
 
 ```bash
 # 1. fill in real secrets (never commit .env)
@@ -100,15 +100,15 @@ curl 'http://localhost:3111/status?jobId=none'   # -> 404 = engine + routes live
 
 | What | Pin |
 |---|---|
-| `iii-sdk` (`package.json`) | `0.23.0-rc.6` |
-| iii CLI / engine (`Dockerfile`, install command above) | `iii/v0.23.0-rc.6` |
-| registry workers (`worker-compose.yaml`) | state 0.22.2, http 0.21.4, queue 0.21.6, email 0.2.0 |
+| `iii-sdk` (`package.json`) | `0.23.0` |
+| iii CLI / engine (`Dockerfile`, install command above) | `iii/v0.23.0` |
+| registry workers (`worker-compose.yaml`) | state 0.22.6, http 0.21.7, queue 0.21.9, email 0.1.9 |
 
 0.23.0 is the release where `iii compose` becomes the way to run a project: engine-managed `workers:` entries in `config.yaml` are rejected (`UNSUPPORTED_CONFIG_WORKERS`) and `iii worker add` is gone, so the previous `config.yaml` no longer exists here. The SDK reads `III_URL` and `III_NAMESPACE` from the daemon, which is why the worker registers in the `reachai` namespace without code changes.
 
-All four registry workers ship binaries for every platform the registry supports, so the image builds natively on amd64 and arm64 alike. When 0.23.0 ships as stable, one tag moves (`III_RELEASE_TAG` in the Dockerfile); no code changes.
+All four registry workers ship binaries for every platform the registry supports, so the image builds natively on amd64 and arm64 alike.
 
-Measured on this pin: the four registry workers are `ready` about 2 s after `up`, and `reachai-backend` is `ready` at 1.6 s with 22 functions, 8 HTTP routes and 24 durable subscriptions registered in the `reachai` namespace.
+Measured on this pin, first boot including the registry downloads: `up` reports 5 of 5 ready in 14.3 s; the four registry workers are `ready` between 4.9 s and 7.8 s after their spawn, and `reachai-backend` is `ready` at 6.5 s with 22 functions, 8 HTTP routes and 24 durable subscriptions registered in the `reachai` namespace.
 
 ## What the platform provides
 
@@ -121,7 +121,7 @@ Nothing here reimplements what a registry worker already does:
 | Topics between steps, retries and DLQ | `queue`: `durable:subscriber` triggers and `iii::durable::publish`, `max_retries: 3`, `backoff_ms: 1000` |
 | Outbound mail | `email`: `email::send` with an `account`, `to`, `subject`, `html`/`text`, `reply_to`; the `from` address and the SMTP login are the account's, set in the compose file |
 
-`email` 0.2.0 reads its accounts from the configuration worker (what `config_override` feeds) and hot-reloads them; the login is `smtp.username` / `smtp.password` on the account, with `${RESEND_API_KEY}` expanded by the engine so the key never lands in the stored value.
+`email` 0.1.9 reads its accounts from the configuration worker (what `config_override` feeds) and hot-reloads them; the login is `smtp.username` / `smtp.password` on the account, with `${RESEND_API_KEY}` expanded by the engine so the key never lands in the stored value.
 
 `sendEmail` no longer passes Resend's `Idempotency-Key`; the paid flow's `emailSent` flag is what prevents a duplicate metadata mail on redelivery.
 

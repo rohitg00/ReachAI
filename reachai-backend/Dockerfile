@@ -1,6 +1,6 @@
-FROM node:22-bookworm-slim
+FROM node:22-trixie-slim
 
-ARG III_RELEASE_TAG=iii/v0.23.0-rc.6
+ARG III_RELEASE_TAG=iii/v0.23.0
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates curl jq \
